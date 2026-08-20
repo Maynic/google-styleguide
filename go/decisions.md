@@ -80,10 +80,10 @@ follow these conventions. They may contain underscores.
 
 <a id="TOC-PackageNames"></a>
 
-Go package names should be short and contain only lowercase letters. A package
-name composed of multiple words should be left unbroken in all lowercase. For
-example, the package [`tabwriter`] is not named `tabWriter`, `TabWriter`, or
-`tab_writer`.
+In Go, package names must be concise and use only lowercase letters and numbers
+(e.g., [`k8s`], [`oauth2`]). Multi-word package names should remain unbroken and
+in all lowercase (e.g., [`tabwriter`] instead of `tabWriter`, `TabWriter`, or
+`tab_writer`).
 
 Avoid selecting package names that are likely to be [shadowed] by commonly used
 local variable names. For example, `usercount` is a better package name than
@@ -110,10 +110,12 @@ code may contain underscores. Specific examples include:
     [package-level documentation examples](https://go.dev/blog/examples)
 
 [`tabwriter`]: https://pkg.go.dev/text/tabwriter
+[`k8s`]: https://pkg.go.dev/k8s.io/client-go/kubernetes
+[`oauth2`]: https://pkg.go.dev/golang.org/x/oauth2
 [shadowed]: best-practices#shadowing
 
 Avoid uninformative package names like `util`, `utility`, `common`, `helper`,
-`models`, and so on that would tempt users of the package to
+`model`, `testhelper`, and so on that would tempt users of the package to
 [rename it when importing](#import-renaming). See:
 
 *   [Guidance on so-called "utility packages"](best-practices#util-packages)
@@ -142,6 +144,7 @@ See also: [Go blog post about package names](https://go.dev/blog/package-names).
 *   Short (usually one or two letters in length)
 *   Abbreviations for the type itself
 *   Applied consistently to every receiver for that type
+*   Not an underscore; omit the name if it is unused
 
 Long Name                   | Better Name
 --------------------------- | -------------------------
@@ -406,14 +409,14 @@ extra word like `raw` and `parsed` or with the underlying representation:
 
 ```go
 // Good:
-limitStr := r.FormValue("limit")
-limit, err := strconv.Atoi(limitStr)
+limitRaw := r.FormValue("limit")
+limit, err := strconv.Atoi(limitRaw)
 ```
 
 ```go
 // Good:
-limitRaw := r.FormValue("limit")
-limit, err := strconv.Atoi(limitRaw)
+limitStr := r.FormValue("limit")
+limit, err := strconv.Atoi(limitStr)
 ```
 
 <a id="repetitive-in-context"></a>
@@ -527,22 +530,16 @@ decoration should generally be avoided.
 
 ### Comment line length
 
-Ensure that commentary is readable from source even on narrow screens.
+There is no fixed [line length] for comments in Go.
 
-When a comment gets too long, it is recommended to wrap it into multiple
-single-line comments. When possible, aim for comments that will read well on an
-80-column wide terminal, however this is not a hard cut-off; there is no fixed
-line length limit for comments in Go. The standard library, for example, often
-chooses to break a comment based on punctuation, which sometimes leaves the
-individual lines closer to the 60-70 character mark.
+[line length]: guide#line-length
 
-There is plenty of existing code in which comments exceed 80 characters in
-length. This guidance should not be used as a justification to change such code
-as part of a readability review (see [consistency](guide#consistency)), though
-teams are encouraged to opportunistically update comments to follow this
-guideline as a part of other refactors. The primary goal of this guideline is to
-ensure that all Go readability mentors make the same recommendation when and if
-recommendations are made.
+Long comment lines should be wrapped to ensure that source is readable in tools
+which do not perform automatic wrapping of comment lines. If you are uncertain
+where to wrap, 80 or 100 columns are common choices. However, this is not a hard
+cut-off; there are situations where breaking a long literal text is harmful.
+There is no requirement for the specific column width at which wrapping occurs.
+Aim to be [consistent](guide#consistency) within a file.
 
 See this [post from The Go Blog on documentation] for more on commentary.
 
@@ -562,17 +559,12 @@ See this [post from The Go Blog on documentation] for more on commentary.
 // if it helps rather than hinders.
 ```
 
-Avoid comments that will wrap repeatedly on small screens, which is a poor
-reader experience.
+Avoid comments that fit large amounts of text onto a single line, which is a
+poor reader experience.
 
 ```text
 # Bad:
-// This is a comment paragraph. The length of individual lines doesn't matter in
-Godoc;
-// but the choice of wrapping causes jagged lines on narrow screens or in code
-review,
-// which can be annoying, especially when in a comment block that will wrap
-repeatedly.
+// This is a comment paragraph. While some code editors and viewers will wrap the paragraph for the reader, others will display a very long line that will overflow most windows and require users to scroll horizontally. In addition, even on a screen capable of displaying the entire line, it is easier to read a narrower paragraph than very wide one.
 //
 // Don't worry too much about the long URL:
 // https://supercalifragilisticexpialidocious.example.com:8080/Animalia/Chordata/Mammalia/Rodentia/Geomyoidea/Geomyidae/
@@ -859,13 +851,14 @@ should not require renaming.) In the event of a name collision, prefer to rename
 the most local or project-specific import.
 
 Generated protocol buffer packages *must* be renamed to remove underscores from
-their names, and their local names must have a `pb` suffix. See [proto and stub
-best practices] for more information.
+their names, and their local names must have a `pb` suffix. See
+[proto and stub best practices](best-practices#import-protos) for more
+information.
 
 ```go
 // Good:
 import (
-    fspb "path/to/package/foo_service_go_proto"
+    foosvcpb "path/to/package/foo_service_go_proto"
 )
 ```
 
@@ -893,11 +886,16 @@ in scope.
 
 ### Import grouping
 
-Imports should be organized in two groups:
+Imports should be organized into the following groups, in order:
 
-*   Standard library packages
+1.  Standard library packages
 
-*   Other (project and vendored) packages
+1.  Other (project and vendored) packages
+
+1.  Protocol Buffer imports (e.g., `fpb "path/to/foo_go_proto"`)
+
+1.  Import for [side-effects](https://go.dev/doc/effective_go#blank_import)
+    (e.g., `_ "path/to/package"`)
 
 ```go
 // Good:
@@ -911,34 +909,6 @@ import (
     "github.com/dsnet/compress/flate"
     "golang.org/x/text/encoding"
     "google.golang.org/protobuf/proto"
-    foopb "myproj/foo/proto/proto"
-    _ "myproj/rpc/protocols/dial"
-    _ "myproj/security/auth/authhooks"
-)
-```
-
-It is acceptable to split the project packages into multiple groups if you want
-a separate group, as long as the groups have some meaning. Common reasons to do
-this:
-
-*   renamed imports
-*   packages imported for their side-effects
-
-Example:
-
-```go
-// Good:
-package main
-
-import (
-    "fmt"
-    "hash/adler32"
-    "os"
-
-
-    "github.com/dsnet/compress/flate"
-    "golang.org/x/text/encoding"
-    "google.golang.org/protobuf/proto"
 
     foopb "myproj/foo/proto/proto"
 
@@ -946,23 +916,6 @@ import (
     _ "myproj/security/auth/authhooks"
 )
 ```
-
-**Note:** Maintaining optional groups - splitting beyond what is necessary for
-the mandatory separation between standard library and Google imports - is not
-supported by the [goimports] tool. Additional import subgroups require attention
-on the part of both authors and reviewers to maintain in a conforming state.
-
-[goimports]: golang.org/x/tools/cmd/goimports
-
-Google programs that are also AppEngine apps should have a separate group for
-AppEngine imports.
-
-Gofmt takes care of sorting each group by import path. However, it does not
-automatically separate imports into groups. The popular [goimports] tool
-combines Gofmt and import management, separating imports into groups based on
-the decision above. It is permissible to let [goimports] manage import
-arrangement entirely, but as a file is revised its import list must remain
-internally consistent.
 
 <a id="import-blank"></a>
 
@@ -2264,88 +2217,47 @@ See also:
 
 <a id="TOC-Interfaces"></a>
 
-Go interfaces generally belong in the package that *consumes* values of the
-interface type, not a package that *implements* the interface type. The
-implementing package should return concrete (usually pointer or struct) types.
-That way, new methods can be added to implementations without requiring
-extensive refactoring. See [GoTip #49: Accept Interfaces, Return Concrete Types]
-for more details.
+Avoid creating interfaces until a [real need](guide#simplicity) exists. Focus on
+the required behavior rather than just abstract named patterns like "service" or
+"repository" and the like.
 
-Do not export a [test double][double types] implementation of an interface from
-an API that consumes it. Instead, design the API so that it can be tested using
-the [public API] of the [real implementation]. See
-[GoTip #42: Authoring a Stub for Testing] for more details. Even when it is not
-feasible to use the real implementation, it may not be necessary to introduce an
-interface fully covering all methods in the real type; the consumer can create
-an interface containing only the methods it needs, as demonstrated in
-[GoTip #78: Minimal Viable Interfaces].
+*   Do not wrap RPC clients in new manual interfaces just for the sake of
+    abstraction or testing.
+    [Use real transports](best-practices#use-real-transports) instead
+    ([testing RPC]).
 
-To test packages that use Stubby RPC clients, use a real client connection. If a
-real server cannot be run in the test, Google's internal practice is to obtain a
-real client connection to a local [test double] using the internal rpctest
-package (coming soon!).
+*   Do not define back doors or export [test double] implementations of an
+    interface solely for testing. Prefer testing via the [public API] of the
+    real implementation instead.
 
-Do not define interfaces before they are used (see
-[TotT: Code Health: Eliminate YAGNI Smells][tott-438] ). Without a realistic
-example of usage, it is too difficult to see whether an interface is even
-necessary, let alone what methods it should contain.
+Design interfaces to be small for easier implementation and composition
+([GoTip #78: Minimal Viable Interfaces]). Document interfaces appropriately
+including their contract, edge cases, and expected errors. Keep interface types
+unexported if they are only used internally within a package.
 
-Do not use interface-typed parameters if the users of the package do not need to
-pass different types for them.
+The consumer of the interface should define it (not the package implementing the
+interface), ensuring it includes only the methods they actually use. The
+producer package may export the interface if the interface is the product (a
+common protocol) to prevent interface redefinition bloat.
 
-Do not export interfaces that the users of the package do not need.
+There is an adage: Functions should take interfaces as arguments but return
+concrete types ([GoTip #49: Accept Interfaces, Return Concrete Types]).
+Returning concrete types allows the caller to have access to every public method
+and field of that specific implementation, not just the subset of methods
+defined in a pre-chosen interface. The caller can still pass that concrete
+result into any other function that expects an interface. Sometimes returning an
+interface is acceptable for encapsulation (e.g., `error` interface), and certain
+constructs like command, chaining, factory, and
+[strategy](https://en.wikipedia.org/wiki/Strategy_pattern) patterns.
 
-**TODO:** Write a more in-depth doc on interfaces and link to it here.
+Deeper discussion on interfaces exists in the
+[Best Practices' section on interfaces](best-practices#interfaces).
 
-[GoTip #42: Authoring a Stub for Testing]: https://google.github.io/styleguide/go/index.html#gotip
-[GoTip #49: Accept Interfaces, Return Concrete Types]: https://google.github.io/styleguide/go/index.html#gotip
 [GoTip #78: Minimal Viable Interfaces]: https://google.github.io/styleguide/go/index.html#gotip
-[real implementation]: best-practices#use-real-transports
+[GoTip #49: Accept Interfaces, Return Concrete Types]: https://google.github.io/styleguide/go/index.html#gotip
+[testing RPC]: https://codelabs.developers.google.com/grpc/getting-started-grpc-go#3
+[test double]: https://abseil.io/resources/swe-book/html/ch13.html
 [public API]: https://abseil.io/resources/swe-book/html/ch12.html#test_via_public_apis
-[double types]: https://abseil.io/resources/swe-book/html/ch13.html#techniques_for_using_test_doubles
-[test double]: https://abseil.io/resources/swe-book/html/ch13.html#basic_concepts
-[tott-438]: https://testing.googleblog.com/2017/08/code-health-eliminate-yagni-smells.html
-
-```go
-// Good:
-package consumer // consumer.go
-
-type Thinger interface { Thing() bool }
-
-func Foo(t Thinger) string { ... }
-```
-
-```go
-// Good:
-package consumer // consumer_test.go
-
-type fakeThinger struct{ ... }
-func (t fakeThinger) Thing() bool { ... }
-...
-if Foo(fakeThinger{...}) == "x" { ... }
-```
-
-```go
-// Bad:
-package producer
-
-type Thinger interface { Thing() bool }
-
-type defaultThinger struct{ ... }
-func (t defaultThinger) Thing() bool { ... }
-
-func NewThinger() Thinger { return defaultThinger{ ... } }
-```
-
-```go
-// Good:
-package producer
-
-type Thinger struct{ ... }
-func (t Thinger) Thing() bool { ... }
-
-func NewThinger() Thinger { return Thinger{ ... } }
-```
 
 <a id="generics"></a>
 
@@ -2807,13 +2719,15 @@ Exceptions are:
     the generated server type, which implements `grpc.ServerStream`. See
     [gRPC Generated Code documentation](https://grpc.io/docs/languages/go/generated-code/).
 
-*   In entrypoint functions (see below for examples of such functions), use
-    [`context.Background()`] or, for tests,
-    [`tb.Context()`](https://pkg.go.dev/testing#TB.Context).
+*   In test functions (e.g. `TestXXX`, `BenchmarkXXX`, `FuzzXXX`), where the
+    context comes from
+    [`(testing.TB).Context()`](https://pkg.go.dev/testing#TB.Context).
+
+*   In other entrypoint functions (see below for examples of such functions),
+    use [`context.Background()`].
 
     *   In binary targets: `main`
     *   In general purpose code and libraries: `init`
-    *   In tests: `TestXXX`, `BenchmarkXXX`, `FuzzXXX`
 
 > **Note**: It is very rare for code in the middle of a callchain to require
 > creating a base context of its own using [`context.Background()`]. Always
@@ -3160,8 +3074,40 @@ Prefer calling `t.Error` over `t.Fatal` for reporting a mismatch. When comparing
 several different properties of a function's output, use `t.Error` for each of
 those comparisons.
 
-Calling `t.Fatal` is primarily useful for reporting an unexpected error
-condition, when subsequent comparison failures are not going to be meaningful.
+```go
+// Good:
+gotMean, gotVariance, err := MyDistribution(input)
+if err != nil {
+  t.Fatalf("MyDistribution(%v) returned unexpected error: %v", input, err)
+}
+if diff := cmp.Diff(wantMean, gotMean); diff != "" {
+  t.Errorf("MyDistribution(%v) returned unexpected difference in mean value (-want +got):\n%s", input, diff)
+}
+if diff := cmp.Diff(wantVariance, gotVariance); diff != "" {
+  t.Errorf("MyDistribution(%v) returned unexpected difference in variance value (-want +got):\n%s", input, diff)
+}
+```
+
+Calling `t.Fatal` is primarily useful for reporting an unexpected condition
+(such as an error or output mismatch) when subsequent failures would be
+meaningless or even mislead the investigator. Note how the code below calls
+`t.Fatalf` and *then* `t.Errorf`:
+
+```go
+// Good:
+gotEncoded := Encode(input)
+if gotEncoded != wantEncoded {
+  t.Fatalf("Encode(%q) = %q, want %q", input, gotEncoded, wantEncoded)
+  // It doesn't make sense to decode from unexpected encoded input.
+}
+gotDecoded, err := Decode(gotEncoded)
+if err != nil {
+  t.Fatalf("Decode(%q) returned unexpected error: %v", gotEncoded, err)
+}
+if gotDecoded != input {
+  t.Errorf("Decode(%q) = %q, want %q", gotEncoded, gotDecoded, input)
+}
+```
 
 For table-driven test, consider using subtests and use `t.Fatal` rather than
 `t.Error` and `continue`. See also
@@ -3372,8 +3318,7 @@ some other error, then consider using [`errors.Is`] or `cmp` with
 > ```go
 > // Good:
 > err := f(test.input)
-> gotErr := err != nil
-> if gotErr != test.wantErr {
+> if gotErr := err != nil; gotErr != test.wantErr {
 >     t.Errorf("f(%q) = %v, want error presence = %v", test.input, err, test.wantErr)
 > }
 > ```

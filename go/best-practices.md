@@ -728,31 +728,7 @@ changed.
 
 ### Import ordering
 
-Imports are typically grouped into the following two (or more) blocks, in order:
-
-1.  Standard library imports (e.g., `"fmt"`)
-1.  imports (e.g., "/path/to/somelib")
-1.  (optional) Protobuf imports (e.g., `fpb "path/to/foo_go_proto"`)
-1.  (optional) Side-effect imports (e.g., `_ "path/to/package"`)
-
-If a file does not have a group for one of the optional categories above, the
-relevant imports are included in the project import group.
-
-Any import grouping that is clear and easy to understand is generally fine. For
-example, a team may choose to group gRPC imports separately from protobuf
-imports.
-
-> **Note:** For code maintaining only the two mandatory groups (one group for
-> the standard library and one for all other imports), the `goimports` tool
-> produces output consistent with this guidance.
->
-> However, `goimports` has no knowledge of groups beyond the mandatory ones; the
-> optional groups are prone to invalidation by the tool. When optional groups
-> are used, attention on the part of both authors and reviewers is required to
-> ensure that groupings remain compliant.
->
-> Either approach is fine, but do not leave the imports section in an
-> inconsistent, partially grouped state.
+See the [Go Style Decisions: Import grouping](decisions.md#import-grouping).
 
 <a id="error-handling"></a>
 
@@ -905,43 +881,14 @@ to know if using status codes is the right choice.
 
 ### Adding information to errors
 
-Any function returning an error should strive to make the error value useful.
-Often, the function is in the middle of a callchain and is merely propagating an
-error from some other function that it called (maybe even from another package).
-Here there is an opportunity to annotate the error with extra information, but
-the programmer should ensure there's sufficient information in the error without
-adding duplicate or irrelevant detail. If you're unsure, try triggering the
-error condition during development: that's a good way to assess what the
-observers of the error (either humans or code) will end up with.
-
-Convention and good documentation help. For example, the standard package `os`
-advertises that its errors contain path information when it is available. This
-is a useful style, because callers getting back an error don't need to annotate
-it with information that they had already provided the failing function.
+When adding information to errors, avoid redundant information that the
+underlying error already provides. The `os` package, for instance, already
+includes path information in its errors.
 
 ```go
 // Good:
 if err := os.Open("settings.txt"); err != nil {
-    return err
-}
-
-// Output:
-//
-// open settings.txt: no such file or directory
-```
-
-If there is something interesting to say about the *meaning* of the error, of
-course it can be added. Just consider which level of the callchain is best
-positioned to understand this meaning.
-
-```go
-// Good:
-if err := os.Open("settings.txt"); err != nil {
-    // We convey the significance of this error to us. Note that the current
-    // function might perform more than one file operation that can fail, so
-    // these annotations can also serve to disambiguate to the caller what went
-    // wrong.
-    return fmt.Errorf("launch codes unavailable: %v", err)
+  return fmt.Errorf("launch codes unavailable: %v", err)
 }
 
 // Output:
@@ -949,12 +896,14 @@ if err := os.Open("settings.txt"); err != nil {
 // launch codes unavailable: open settings.txt: no such file or directory
 ```
 
-Contrast with the redundant information here:
+Here, "launch codes unavailable" adds specific meaning to the `os.Open` error
+that's relevant to the current function's context, without duplicating the
+underlying file path information.
 
 ```go
 // Bad:
 if err := os.Open("settings.txt"); err != nil {
-    return fmt.Errorf("could not open settings.txt: %w", err)
+  return fmt.Errorf("could not open settings.txt: %v", err)
 }
 
 // Output:
@@ -962,83 +911,130 @@ if err := os.Open("settings.txt"); err != nil {
 // could not open settings.txt: open settings.txt: no such file or directory
 ```
 
-When adding information to a propagated error, you can either wrap the error or
-present a fresh error. Wrapping the error with the `%w` verb in `fmt.Errorf`
-allows callers to access data from the original error. This can be very useful
-at times, but in other cases these details are misleading or uninteresting to
-the caller. See the
-[blog post on error wrapping](https://blog.golang.org/go1.13-errors) for more
-information. Wrapping errors also expands the API surface of your package in a
-non-obvious way, and this can cause breakages if you change the implementation
-details of your package.
-
-It is best to avoid using `%w` unless you also document (and have tests that
-validate) the underlying errors that you expose. If you do not expect your
-caller to call `errors.Unwrap`, `errors.Is` and so on, don't bother with `%w`.
-
-The same concept applies to [structured errors](#error-structure) like
-[`*status.Status`][status] (see [canonical codes]). For example, if your server
-sends malformed requests to a backend and receives an `InvalidArgument` code,
-this code should *not* be propagated to the client, assuming that the client has
-done nothing wrong. Instead, return an `Internal` canonical code to the client.
-
-However, annotating errors helps automated logging systems preserve the status
-payload of an error. For example, annotating the error is appropriate in an
-internal function:
-
-```go
-// Good:
-func (s *Server) internalFunction(ctx context.Context) error {
-    // ...
-    if err != nil {
-        return fmt.Errorf("couldn't find remote file: %w", err)
-    }
-}
-```
-
-Code directly at system boundaries (typically RPC, IPC, storage, and similar)
-should report errors using the canonical error space. It is the responsibility
-of code here to handle domain-specific errors and represent them canonically.
-For example:
+Don't add an annotation if its sole purpose is to indicate a failure without
+adding new information. The presence of an error sufficiently conveys the
+failure to the caller.
 
 ```go
 // Bad:
-func (*FortuneTeller) SuggestFortune(context.Context, *pb.SuggestionRequest) (*pb.SuggestionResponse, error) {
-    // ...
-    if err != nil {
-        return nil, fmt.Errorf("couldn't find remote file: %w", err)
-    }
-}
+return fmt.Errorf("failed: %v", err) // just return err instead
 ```
 
-```go
-// Good:
-import (
-    "google.golang.org/grpc/codes"
-    "google.golang.org/grpc/status"
-)
-func (*FortuneTeller) SuggestFortune(context.Context, *pb.SuggestionRequest) (*pb.SuggestionResponse, error) {
-    // ...
-    if err != nil {
-        // Or use fmt.Errorf with the %w verb if deliberately wrapping an
-        // error which the caller is meant to unwrap.
-        return nil, status.Errorf(codes.Internal, "couldn't find fortune database", status.ErrInternal)
-    }
-}
-```
+The
+[choice between `%v` and `%w` when wrapping errors](https://go.dev/blog/go1.13-errors#whether-to-wrap)
+with `fmt.Errorf` is a nuanced decision that significantly impacts how errors
+are propagated handled, inspected, and documented within your application. The
+core principle is to make error values useful to their observers, whether those
+observers are humans or code.
+
+1.  **`%v` for simple annotation or new error**
+
+    The `%v` verb is your general-purpose tool for string formatting of any Go
+    value, including errors. When used with `fmt.Errorf`, it embeds the string
+    representation of an error (what its `Error()` method returns) into a new
+    error value, dropping any structured information from the original error.
+    Examples to use `%v`:
+
+    *   Adding interesting, non-redundant context: as in the example above.
+
+    *   Logging or displaying errors: When the primary goal is to present a
+        human-readable error message in logs or to a user, and you don't intend
+        for the caller to programmatically `errors.Is` or `errors.As` the error
+        (Note: `errors.Unwrap` is generally not recommended here as it doesn't
+        handle multi-errors).
+
+    *   Creating fresh, independent errors: Sometimes it is necessary to
+        transform an error into a new error message, thereby hiding the
+        specifics of the original error. This practice is particularly
+        beneficial at system boundaries, including but not limited to RPC, IPC,
+        and storage, where we translate domain-specific errors into a canonical
+        error space.
+
+        ```go
+        // Good:
+        func (*FortuneTeller) SuggestFortune(context.Context, *pb.SuggestionRequest) (*pb.SuggestionResponse, error) {
+          // ...
+          if err != nil {
+            return nil, fmt.Errorf("couldn't find fortune database: %v", err)
+          }
+        }
+        ```
+
+        We could also explicitly annotate RPC code `Internal` to the example
+        above.
+
+        ```go
+        // Good:
+        import (
+          "google.golang.org/grpc/codes"
+          "google.golang.org/grpc/status"
+        )
+
+        func (*FortuneTeller) SuggestFortune(context.Context, *pb.SuggestionRequest) (*pb.SuggestionResponse, error) {
+          // ...
+          if err != nil {
+            // Or use fmt.Errorf with the %w verb if deliberately wrapping an
+            // error which the caller is meant to unwrap.
+            return nil, status.Errorf(codes.Internal, "couldn't find fortune database", status.ErrInternal)
+          }
+        }
+        ```
+
+1.  **`%w` (wrap) for programmatic inspection and error chaining**
+
+    The `%w` verb is specifically designed for error wrapping. It creates a new
+    error that provides an `Unwrap()` method, allowing callers to
+    programmatically inspect the error chain using `errors.Is` and `errors.As`.
+    Examples to use `%w`:
+
+    *   Adding context while preserving the original error for programmatic
+        inspection: This is the primary use case within helpers of your
+        application. You want to enrich an error with additional context (e.g.,
+        what operation was being performed when it failed) but still allow the
+        caller to check if the underlying error is a specific sentinel error or
+        type.
+
+        ```go
+        // Good:
+        func (s *Server) internalFunction(ctx context.Context) error {
+          // ...
+          if err != nil {
+            return fmt.Errorf("couldn't find remote file: %w", err)
+          }
+        }
+        ```
+
+        This allows a higher-level function to do `errors.Is(err,
+        fs.ErrNotExist)` if the underlying error was `fs.ErrNotExist`, even
+        though it's wrapped.
+
+        At points where your system interacts with external systems like RPC,
+        IPC, or storage, it's often better to translate domain-specific errors
+        into a standardized error space (e.g., gRPC status codes) rather than
+        simply wrapping the raw underlying error with `%w`. The client typically
+        doesn't care about the exact internal file system error; they care about
+        the canonical result (e.g., `Internal`, `NotFound`, `PermissionDenied`).
+
+    *   When you explicitly document and test the underlying errors you expose:
+        If your package's API guarantees that certain underlying errors can be
+        unwrapped and checked by callers (e.g., "this function might return
+        `ErrInvalidConfig` wrapped within a more general error"), then `%w` is
+        appropriate. This forms part of your package's contract.
 
 See also:
 
 *   [Error Documentation Conventions](#documentation-conventions-errors)
+*   [Blog post on error wrapping](https://blog.golang.org/go1.13-errors)
 
 <a id="error-percent-w"></a>
 
 ### Placement of %w in errors
 
-Prefer to place `%w` at the end of an error string.
+Prefer to place `%w` at the end of an error string *if* you are to use
+[error wrapping](https://go.dev/blog/go1.13-errors) with the `%w` formatting
+verb.
 
-Errors can be wrapped with
-[the `%w` verb](https://blog.golang.org/go1.13-errors), or by placing them in a
+Errors can be wrapped with the `%w` verb, or by placing them in a
 [structured error](https://google.github.io/styleguide/go/index.html#gotip) that
 implements `Unwrap() error` (ex:
 [`fs.PathError`](https://pkg.go.dev/io/fs#PathError)).
@@ -1099,6 +1095,75 @@ fmt.Println(err3) // err3-1 err2-1 err1 err2-2 err3-2
 
 Therefore, in order for error text to mirror error chain structure, prefer
 placing the `%w` verb at the end with the form `[...]: %w`.
+
+<a id="error-percent-w-sentinel-placement"></a>
+
+#### Sentinel error placement
+
+An exception to this rule is when wrapping sentinel errors. A sentinel error is
+an error that serves as a primary categorization of a failure. This helps
+observers quickly understand the nature of a failure (such as "not found" or
+"invalid argument") without having to parse the entire error message.
+Identifying that error type as early as possible in the error string is
+beneficial.
+
+Examples of sentinel errors include os errors (e.g., [`os.ErrInvalid`]) and
+package-level errors.
+
+In these cases, placing the `%w` verb at the beginning of the error string can
+improve readability by immediately identifying the category of the error.
+
+```go
+// Good:
+package parser
+
+var ErrParse = fmt.Errorf("parse error")
+
+// This is another package error that could be returned.
+var ErrParseInvalidHeader = fmt.Errorf("%w: invalid header", ErrParse)
+
+func parseHeader() error {
+  err := checkHeader()
+  return fmt.Errorf("%w: invalid character in header: %v", ErrParseInvalidHeader, err)
+}
+
+err := fmt.Errorf("%w: couldn't find fortune database: %v", ErrInternal, err)
+```
+
+Placing the status at the beginning ensures that the most relevant categorical
+information is most prominent.
+
+```go
+// Bad:
+package parser
+
+var ErrParse = fmt.Errorf("parse error")
+
+// This is another package error that could be returned.
+var ErrParseInvalidHeader = fmt.Errorf("%w: invalid header", ErrParse)
+
+func parseHeader() error {
+  err := checkHeader()
+  return fmt.Errorf("invalid character in header: %v: %w", err, ErrParseInvalidHeader)
+}
+
+var ErrInternal = status.Error(codes.Internal, "internal")
+err2 := fmt.Errorf("couldn't find fortune database: %v: %w", err, ErrInternal)
+```
+
+When you place it at the end, it makes it harder to identify the error category
+when reading the error text, as it's buried in the specific error details.
+
+[`os.ErrInvalid`]: https://pkg.go.dev/os#ErrInvalid
+
+See also:
+
+*   [Go Tip #48: Error Sentinel Values]
+*   [Go Tip #106: Error Naming Conventions]
+
+[commentary]: decisions#commentary
+[Go Tip #48: Error Sentinel Values]: https://google.github.io/styleguide/go/index.html#gotip
+[Go Tip #106: Error Naming Conventions]: https://google.github.io/styleguide/go/index.html#gotip
 
 <a id="error-logging"></a>
 
@@ -1881,7 +1946,7 @@ It's acceptable to use value types for local variables of composites (such as
 structs and arrays) even if they contain such uncopyable fields. However, if the
 composite is returned by the function, or if all accesses to it end up needing
 to take an address anyway, prefer declaring the variable as a pointer type at
-the outset. Similarly, protobufs should be declared as pointer types.
+the outset. Similarly, protobuf messages should be declared as pointer types.
 
 ```go
 // Good:
@@ -2768,7 +2833,7 @@ func badSetup(t *testing.T) {
     }
 }
 
-func mustGoodSetup(t *testing.T) {
+func goodSetup(t *testing.T) {
     t.Helper()
     if err := paint("lilac"); err != nil {
         t.Fatalf("Could not paint the house under test: %v", err)
@@ -2781,7 +2846,7 @@ func TestBad(t *testing.T) {
 }
 
 func TestGood(t *testing.T) {
-    mustGoodSetup(t) // line 32
+    goodSetup(t) // line 32
     // ...
 }
 ```
@@ -3141,11 +3206,11 @@ func TestRegression682831(t *testing.T) {
 ```
 
 The reason that common teardown is tricky is there is no uniform place to
-register cleanup routines. If the setup function (in this case `loadDataset`)
-relies on a context, `sync.Once` may be problematic. This is because the second
-of two racing calls to the setup function would need to wait for the first call
-to finish before returning. This period of waiting cannot be easily made to
-respect the context's cancellation.
+register cleanup routines. If the setup function (in this case
+`mustLoadDataset`) relies on a context, `sync.Once` may be problematic. This is
+because the second of two racing calls to the setup function would need to wait
+for the first call to finish before returning. This period of waiting cannot be
+easily made to respect the context's cancellation.
 
 <a id="string-concat"></a>
 
@@ -3601,3 +3666,327 @@ See also:
 
 *   [Go Tip #36: Enclosing Package-Level State](https://google.github.io/styleguide/go/index.html#gotip)
 *   [Go Tip #80: Dependency Injection Principles](https://google.github.io/styleguide/go/index.html#gotip)
+
+<a id="interfaces"></a>
+
+## Interfaces
+
+Interfaces in Go are powerful but can be overused or misunderstood. Because Go
+interfaces are satisfied implicitly, they are a structural tool rather than a
+declarative one. The following guidance provides the best practices for how to
+design and return interfaces in Go without over-engineering your codebase.
+
+Refer to [Decisions' section on interfaces](decisions#interfaces) for a summary.
+
+<a id="avoid-unnecessary-interfaces"></a>
+
+### Avoid unnecessary interfaces
+
+The most common mistake is creating an interface before a
+[real need](guide#simplicity) exists.
+
+1.  **Don’t confuse the concept with the keyword:** Just because you are
+    designing a "service" or a "repository" or similar pattern doesn't mean you
+    need a named interface type (e.g., `type Service interface`). Focus on the
+    behavior and its concrete implementation first.
+
+2.  **Reuse existing interfaces:** If an interface already exists, especially in
+    generated code, like a RPC client or server, use it ([testing RPC]). Do not
+    wrap a generated RPC code in a new, manual interface just for the sake of
+    abstraction or testing. [Use real transports](#use-real-transports) instead.
+
+3.  **Don't define back doors only for tests:** Do not export a [test double]
+    implementation of an interface from an API that consumes it. Instead, prefer
+    to design the API so that it can be tested using the [public API] of the
+    real implementation.
+
+    Every exported type increases the cognitive load for the reader. When you
+    export a test double alongside the real implementation, you force the reader
+    to understand three entities (the interface, the real implementation, and
+    the test double) instead of one.
+
+    Export an interface for a test double when you have a
+    [material need](guide#least-mechanism) to support substitution.
+
+When it does make sense to create an interface:
+
+1.  **Multiple implementations:** When there are two or more concrete types that
+    must be handled by the same logic (e.g., something that operates with both
+    [json.Encoder](https://pkg.go.dev/encoding/json#Encoder) and
+    [gob.GobEncoder](https://pkg.go.dev/encoding/gob#GobEncoder)), the API
+    consumer could define an interface.
+
+2.  **Decoupling packages:** To break circular dependencies between two packages
+    (see an [example](#avoiding-circular-dependencies)), an API producer could
+    define an interface.
+
+    **Caution:** Carefully observe guidance on [Package Size](#package-size).
+    Introducing interfaces to break dependency cycles is often a signal of
+    improperly structured packages.
+
+3.  **Hiding complexity:** When a concrete type has a massive API surface, but a
+    specific function only needs one or two methods, an API consumer may define
+    an interface.
+
+<a id="interface-ownership-and-visibility"></a>
+
+### Interface ownership and visibility
+
+1.  **Do not export interface types unnecessarily:** If an interface is only
+    used internally within a package to satisfy a specific logic flow, keep the
+    interface unexported. Exporting an interface commits you to maintaining that
+    API for external callers.
+
+2.  **The consumer defines the interface:** In Go, interfaces generally belong
+    in the package that uses them, not the package that implements them. The
+    consumer should define only the methods they actually use
+    [GoTip #78: Minimal Viable Interfaces], adhering to the idea that
+    [the bigger the interface, the weaker the abstraction](https://go-proverbs.github.io/).
+
+    There are common scenarios where it often makes sense for the producer (the
+    package providing the logic) to export the interface:
+
+    *   **The interface is the product:** When a package’s primary purpose is to
+        provide a common protocol that many different implementations must
+        follow, the producer defines the interface. For example,
+        [io.Writer](https://pkg.go.dev/io#Writer),
+        [hash.Hash](https://pkg.go.dev/hash#Hash). The concept of "protocol"
+        includes aspects like [documentation](#documentation) about critical
+        behaviors (e.g., expected use case, edge cases, concurrency) that need
+        to be centrally and canonically explicated. Another prominent example of
+        this is generated interfaces from protobuf. It doesn't abstract a
+        specific behavior, it defines a boundary. Its purpose is to ensure that
+        your server implementation exactly matches the schema defined in the
+        `.proto` file. Here, the interface serves as a rigid legal contract
+        between the service and its clients.
+
+        For large systems, if the interface lives inside a huge implementation
+        package, every client is forced to import the entire world just to
+        reference the interface. You may define the interface in a standalone,
+        implementation-free package, avoiding unnecessary symbols and potential
+        circular dependencies. This is also the same philosophy used by
+        generated code from protobuf.
+
+    *   **Prevent interface bloat:** In large codebases, maintenance becomes
+        difficult if numerous packages utilize the same `AuthService` while each
+        defining an identical `type Authorizer interface`. While Go often favors
+        [a little copying over a little dependency](https://go-proverbs.github.io/),
+        keep in mind that maintaining perfectly mirrored interfaces (see point
+        above) across many packages can create an unnecessary burden.
+
+    *   **Resolve circular dependency:** see
+        [an example](#avoiding-circular-dependencies) below.
+
+<a id="designing-effective-interfaces"></a>
+
+### Designing effective interfaces
+
+1.  **Keep interfaces small:** The larger the interface,
+    [the harder it is to implement and to write code that takes advantage of it](https://go-proverbs.github.io/).
+    Small interfaces are easier to compose into larger ones if needed.
+
+2.  **Documentation:** Treat every interface as the "user manual" for your
+    abstraction. The depth of your documentation should be proportional to the
+    interface's cognitive load, not just the count of its methods. Whether an
+    interface has ten methods or a single `Write` of
+    [io.Writer](https://pkg.go.dev/io#Writer), if a programmer is expected to
+    interact with that type, the API must be documented thoroughly.
+
+    *   **Single-method interfaces:** documentation on the type itself is
+        usually sufficient (e.g., io.Writer). Explain its contract, edge cases,
+        and expected errors.
+    *   **Multi-method interfaces:** each individual method requires its own
+        documentation.
+    *   **Unexported interfaces:** consider documenting them anyway. They are
+        often the glue that holds complex internal logic together, and because
+        they are invisible to external users, they can easily become mystery
+        code for future maintainers (including your future self).
+
+3.  **Accept interfaces, return concrete types:** Returning a concrete type
+    allows the caller to use the full functionality of the value without being
+    locked into a specific interface abstraction
+    [GoTip #49: Accept Interfaces, Return Concrete Types].
+
+There are several common scenarios where returning an interface is the idiomatic
+choice:
+
+1.  **Encapsulation:** While interfaces cannot strictly hide exported methods
+    (as they remain accessible via type assertions), returning an interface is a
+    powerful tool for limiting the default API surface and guiding the caller's
+    behavior.. The most common example is the `error` interface; you
+    [almost never return a concrete error type](decisions#errors) like
+    `*MyCustomError`.
+
+    Consider a `ThrottledReader` that implements `io.Reader` but also has a
+    `Refill` method for internal bucket management. Returning the concrete
+    `*ThrottledReader` invites the caller to manage the bucket manually, which
+    could lead to race conditions or broken rate-limiting logic. By returning an
+    interface, you tell the caller that your only job is to consume this reader.
+    If you try to cast this back to a `ThrottledReader` to `Refill` the internal
+    bucket, you are breaking the contract.
+
+    ```go
+    // Good:
+    type ThrottledReader struct {
+        source     io.Reader
+        limit      int  // bytes per second
+        balance    int  // current allowance of bytes
+        lastRefill time.Time
+    }
+
+    // Read implements the io.Reader interface with rate-limiting logic.
+    func (t *ThrottledReader) Read(p []byte) (int, error) { ... }
+
+    // Refill manually adds tokens to the bucket.
+    // INTERNAL USE ONLY: Calling this from outside breaks the rate limit logic.
+    func (t *ThrottledReader) Refill(amount int) {
+        t.balance = min(t.balance + amount, t.limit)
+    }
+
+    // New returns the io.Reader with rate-limiting.
+    func New(r io.Reader, bytesPerSec int) io.Reader {
+        return &ThrottledReader{
+            source:     r,
+            limit:      bytesPerSec,
+            balance:    bytesPerSec, // start with a full bucket
+            lastRefill: time.Now(),
+        }
+    }
+    ```
+
+    This raises a natural question: if `Refill` is dangerous, why export it at
+    all? In complex systems, you often need internal orchestration. For example,
+    an `AggregateReader` manages multiple `ThrottledReader` values to ensure
+    total bandwidth across all streams stays under a global limit. This
+    coordinator needs to call Refill to distribute tokens, but the non-power
+    user processing the data should never see that capability.
+
+    **Caution:** Before returning an interface to hide implementation, ask:
+    "Would a user calling these extra methods actually break the system's
+    integrity or meaningfully limit maintainability?" If the extra details allow
+    the user to bypass safety checks, or if exposing the concrete type makes it
+    impossible to change the underlying provider later without a breaking
+    change, you may return an interface. Do not rotely encapsulate without
+    reason.
+
+2.  **Certain patterns:** If a function is designed to return one of several
+    different concrete types based on decisions made at runtime, it must return
+    an interface. This is commonly true with command, chaining, factory, and
+    [strategy](https://en.wikipedia.org/wiki/Strategy_pattern) patterns.
+    Consider this code that selects which encoder to use based the requested
+    format:
+
+    ```go
+    // Good:
+    func NewWriter(format string) io.Writer {
+        switch format {
+        case "json":
+            return &jsonWriter{}
+        case "xml":
+            return &xmlWriter{}
+        default:
+            return &textWriter{}
+        }
+    }
+    ```
+
+    The following example of a chaining API demonstrates how returning an
+    interface enables polymorphic behavior. By allowing callers to use either
+    `client.Do(req)` or `client.WithAuth("token").Do(req)`, you can swap
+    implementations without breaking the calling code.
+
+    ```go
+    // Good:
+    type Client interface {
+        WithAuth(token string) Client
+        Do(req *Request) error
+    }
+    ```
+
+    These patterns are guidelines, not rules. Avoid forcing an interface if a
+    single, robust concrete type can handle the abstraction internally. For
+    example, the standard [database/sql](https://pkg.go.dev/database/sql#DB)
+    library exports a single concrete `DB` type instead of forcing an interface
+    to handle types like `MySQLDB` and `OracleDB`.
+
+3.  <span id="avoiding-circular-dependencies">**Avoiding circular
+    dependencies:**</span> If returning a concrete type would require importing
+    a package that already imports your current package, you must return an
+    interface to break the circular dependency.
+
+    For example:
+
+    ```go
+    // Bad:
+    package app
+
+    import "myproject/plugin"
+
+    type Config struct {
+        APIKey string
+    }
+
+    func Start() {
+        p := plugin.New()
+    }
+    ```
+
+    ```go
+    // Bad:
+    package plugin
+
+    import "myproject/app"  // ERROR: Import cycle!
+
+    func New() *app.Config {
+        return &app.Config{APIKey: "secret"}
+    }
+    ```
+
+    In this case, `plugin`'s `New` cannot return `*app.Config` because it would
+    create a circular import. To break this, we use the fact that interfaces are
+    satisfied implicitly. We move the "contract" to a neutral place or have the
+    producer return an interface that the consumer already understands.
+
+    If `plugin`'s `New` returns an interface instead of the concrete
+    `*app.Config` struct, it no longer needs to import package `app`.
+
+    ```go
+    package plugin
+
+    type Configurer interface {
+        APIKey() string
+    }
+
+    type localConfig struct {
+        key string
+    }
+
+    func (c localConfig) APIKey() string { return c.key }
+
+    // New returns the interface Configurer instead of the concrete app.Config
+    func New() Configurer {
+        return &localConfig{key: "secret"}
+    }
+    ```
+
+    ```go
+    package app
+
+    import "myproject/plugin"
+
+    func Start() {
+        conf := plugin.New()  // 'conf' is now a Configurer interface
+        fmt.Println(conf.APIKey())
+    }
+    ```
+
+    **Caution:** Carefully observe guidance on [Package Size](#package-size).
+    Introducing interfaces to break dependency cycles is often a signal of
+    improperly structured packages. Consolidated packages are often preferred
+    over too many too small packages that fail to stand on their own.
+
+[GoTip #78: Minimal Viable Interfaces]: https://google.github.io/styleguide/go/index.html#gotip
+[GoTip #49: Accept Interfaces, Return Concrete Types]: https://google.github.io/styleguide/go/index.html#gotip
+[testing RPC]: https://codelabs.developers.google.com/grpc/getting-started-grpc-go#3
+[test double]: https://abseil.io/resources/swe-book/html/ch13.html
+[public API]: https://abseil.io/resources/swe-book/html/ch12.html#test_via_public_apis
